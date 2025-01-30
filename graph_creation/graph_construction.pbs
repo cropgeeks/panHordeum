@@ -1,0 +1,56 @@
+#!/bin/bash
+## qsub parameters
+#PBS -N panhor_cactus
+#PBS -l walltime=168:00:00
+#PBS -l ncpus=64
+#PBS -l mem=2000gb
+#PBS -l scratch_local=5000gb
+#PBS -q large_mem
+#PBS -m abe
+
+# Environment with cactus, hal2vg and vg installed
+# For instance, follow https://github.com/ComparativeGenomicsToolkit/cactus/blob/v2.9.3/BIN-INSTALL.md
+env="Cactus"
+virtualenv="/path_to_cactus/cactus-bin-v2.8.1/venv-cactus-v2.8.1/bin/activate"
+
+# Set threads for the job
+threads=$(cat $PBS_NODEFILE | wc -l)
+
+## Define inputs and outputs
+# Guide species tree for cactus
+tree="species_tree.newick"
+
+# Folder with the assembled and masked genomes (in fasta.gz)
+genome_dir="genomes"
+
+# Prefix for results
+graph="PanHordeum"
+
+#############################################################
+##                      Computation                        ##
+#############################################################
+
+conda activate $env
+
+## Decompress genomes (to be safe)
+pigz -d -p $threads $genome_dir/*.fasta.gz
+
+## Prepare Cactus
+mkdir -p tmp
+export TMPDIR="$(pwd)/tmp"
+
+## Prepare the seqFile for cactus invocation
+cat $tree > seqFile
+
+for file in $genome_dir/*.fasta; do
+	name=$(basename $file .fasta)
+	echo -e "$name\t$file" >> seqFile
+done
+
+## Run prograssive cactus
+source $virtualenv
+cactus ./workdir seqFile $graph.hal --workDir tmp --maxCores $threads --maxMemory 2000Gi --defaultMemory 50Gi --defaultDisk 2000Gi --logFile log --rotatingLogging --disableCaching > extra_log 2>&1
+
+## Convert the WGA alignemnt in .hal format into a pangenome graph in .gfa
+hal2vg --noAncestors $graph.hal > $graph.pg
+vg convert $graph.pg -f  > $graph.gfa
